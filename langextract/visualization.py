@@ -290,23 +290,52 @@ def _build_highlighted_text(
 
   points.sort(key=sort_key)
 
+  def start_tag(point: SpanPoint) -> str:
+    colour = color_map.get(point.extraction.extraction_class, '#ffff8d')
+    highlight_class = ' lx-current-highlight' if point.span_idx == 0 else ''
+    return (
+        f'<span class="lx-highlight{highlight_class}"'
+        f' data-idx="{point.span_idx}" style="background-color:{colour};">'
+    )
+
   html_parts: list[str] = []
+  # START points of the spans open in the HTML, outermost first.
+  open_spans: list[SpanPoint] = []
+  # Spans closed only because a span around them ended. They are reopened
+  # before the next text or start tag.
+  to_reopen: list[SpanPoint] = []
+
+  def reopen_spans() -> None:
+    for open_point in to_reopen:
+      html_parts.append(start_tag(open_point))
+      open_spans.append(open_point)
+    to_reopen.clear()
+
   cursor = 0
   for point in points:
     if point.position > cursor:
+      reopen_spans()
       html_parts.append(html.escape(text[cursor : point.position]))
 
     if point.tag_type == TagType.START:
-      colour = color_map.get(point.extraction.extraction_class, '#ffff8d')
-      highlight_class = ' lx-current-highlight' if point.span_idx == 0 else ''
-
-      span_html = (
-          f'<span class="lx-highlight{highlight_class}"'
-          f' data-idx="{point.span_idx}" style="background-color:{colour};">'
+      reopen_spans()
+      html_parts.append(start_tag(point))
+      open_spans.append(point)
+    elif any(p.span_idx == point.span_idx for p in to_reopen):
+      # The span ends where it would be reopened; skip the empty fragment.
+      to_reopen[:] = [p for p in to_reopen if p.span_idx != point.span_idx]
+    else:
+      # '</span>' closes the innermost open span. When spans cross, also
+      # close the spans opened inside this one and reopen them afterwards,
+      # so that each span keeps its own range.
+      depth = max(
+          i
+          for i, open_point in enumerate(open_spans)
+          if open_point.span_idx == point.span_idx
       )
-      html_parts.append(span_html)
-    else:  # point.tag_type == TagType.END
-      html_parts.append('</span>')
+      html_parts.append('</span>' * (len(open_spans) - depth))
+      to_reopen[:0] = open_spans[depth + 1 :]
+      del open_spans[depth:]
 
     cursor = point.position
 
@@ -521,12 +550,13 @@ def _build_visualization_html(
           const playBtn = document.querySelector('.lx-control-btn');
           if (playBtn) playBtn.textContent = isPlaying ? '⏸ Pause' : '▶️ Play';
 
-          const prevHighlight = document.querySelector('.lx-text-window .lx-current-highlight');
-          if (prevHighlight) prevHighlight.classList.remove('lx-current-highlight');
-          const currentSpan = document.querySelector('.lx-text-window span[data-idx="' + currentIndex + '"]');
-          if (currentSpan) {{
-            currentSpan.classList.add('lx-current-highlight');
-            currentSpan.scrollIntoView({{block: 'center', behavior: 'smooth'}});
+          // A span that crosses another is split into several elements.
+          document.querySelectorAll('.lx-text-window .lx-current-highlight')
+            .forEach((el) => el.classList.remove('lx-current-highlight'));
+          const currentSpans = document.querySelectorAll('.lx-text-window span[data-idx="' + currentIndex + '"]');
+          currentSpans.forEach((el) => el.classList.add('lx-current-highlight'));
+          if (currentSpans.length) {{
+            currentSpans[0].scrollIntoView({{block: 'center', behavior: 'smooth'}});
           }}
         }}
 

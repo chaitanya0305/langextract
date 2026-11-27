@@ -93,6 +93,42 @@ class VisualizationTest(absltest.TestCase):
 
     self.assertEqual(actual_html, expected_html)
 
+  def test_build_highlighted_text_crossing_spans_keep_their_ranges(self):
+    text = "Take aspirin 500 mg daily."
+    extractions = [
+        data.Extraction(
+            extraction_class="DOSE",
+            extraction_text="aspirin 500 mg",
+            char_interval=data.CharInterval(start_pos=5, end_pos=19),
+        ),
+        data.Extraction(
+            extraction_class="SCHEDULE",
+            extraction_text="500 mg daily",
+            char_interval=data.CharInterval(start_pos=13, end_pos=25),
+        ),
+    ]
+    color_map = {"DOSE": "#ff0000", "SCHEDULE": "#00ff00"}
+    dose_open = (
+        '<span class="lx-highlight lx-current-highlight" data-idx="0" '
+        'style="background-color:#ff0000;">'
+    )
+    schedule_open = (
+        '<span class="lx-highlight" data-idx="1" '
+        'style="background-color:#00ff00;">'
+    )
+    # A plain '</span>' at the end of DOSE would close SCHEDULE instead, so
+    # SCHEDULE is closed with it and reopened for the rest of its range.
+    expected_html = (
+        f"Take {dose_open}aspirin {schedule_open}500 mg</span></span>"
+        f"{schedule_open} daily</span>."
+    )
+
+    actual_html = visualization._build_highlighted_text(
+        text, extractions, color_map
+    )
+
+    self.assertEqual(actual_html, expected_html)
+
   def test_build_highlighted_text_escapes_html_in_text_and_tooltip(self):
 
     text = "Text with <unsafe> content & ampersand."
