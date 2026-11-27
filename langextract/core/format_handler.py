@@ -46,6 +46,51 @@ _FENCE_RE = re.compile(
 _THINK_TAG_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
 
 
+_YAML_BOOL_TAG = "tag:yaml.org,2002:bool"
+_YAML_INT_TAG = "tag:yaml.org,2002:int"
+_YAML_FLOAT_TAG = "tag:yaml.org,2002:float"
+_YAML_1_1_TYPED_TAGS = frozenset({
+    _YAML_BOOL_TAG,
+    _YAML_INT_TAG,
+    _YAML_FLOAT_TAG,
+    "tag:yaml.org,2002:timestamp",
+})
+
+
+class _YamlLoader(yaml.SafeLoader):
+  """SafeLoader that keeps YAML 1.1-only plain scalars as strings.
+
+  PyYAML follows YAML 1.1, so plain `no` loads as False, `12:30` as 750,
+  `010` as 8 and `2024-01-15` as a date. Models write these unquoted as
+  extraction text, so only true/false and plain decimal numbers are typed.
+  """
+
+
+_YamlLoader.yaml_implicit_resolvers = {
+    first: [
+        (tag, regexp)
+        for tag, regexp in resolvers
+        if tag not in _YAML_1_1_TYPED_TAGS
+    ]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_YamlLoader.add_implicit_resolver(
+    _YAML_BOOL_TAG,
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+_YamlLoader.add_implicit_resolver(
+    _YAML_INT_TAG,
+    re.compile(r"^[-+]?(?:0|[1-9][0-9]*)$"),
+    list("-+0123456789"),
+)
+_YamlLoader.add_implicit_resolver(
+    _YAML_FLOAT_TAG,
+    re.compile(r"^[-+]?(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?$"),
+    list("-+0123456789."),
+)
+
+
 def _normalize_format_type(
     format_type: data.FormatType | str | None,
 ) -> data.FormatType:
@@ -280,7 +325,7 @@ class FormatHandler:
     """Parse content, retrying without <think> tags on failure."""
     try:
       if self.format_type == data.FormatType.YAML:
-        return yaml.safe_load(content)
+        return yaml.load(content, Loader=_YamlLoader)
       return json.loads(content)
     except (yaml.YAMLError, json.JSONDecodeError):
       if strict:
@@ -289,7 +334,7 @@ class FormatHandler:
       if _THINK_TAG_RE.search(content):
         stripped = _THINK_TAG_RE.sub("", content).strip()
         if self.format_type == data.FormatType.YAML:
-          return yaml.safe_load(stripped)
+          return yaml.load(stripped, Loader=_YamlLoader)
         return json.loads(stripped)
       raise
 

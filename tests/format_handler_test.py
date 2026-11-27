@@ -370,5 +370,60 @@ class NonGeminiModelParsingTest(parameterized.TestCase):
       format_handler.FormatHandler(format_type=123)  # type: ignore[arg-type]
 
 
+class YamlPlainScalarTest(absltest.TestCase):
+  """Plain YAML scalars that YAML 1.1 would retype stay as text."""
+
+  def test_yaml_1_1_scalars_parse_as_text(self):
+    handler = format_handler.FormatHandler(
+        format_type=data.FormatType.YAML,
+        use_wrapper=True,
+        wrapper_key="extractions",
+        use_fences=False,
+    )
+    parsed = handler.parse_output(textwrap.dedent("""\
+        extractions:
+        - answer: no
+          answer_attributes:
+            seen: 2024-01-15
+        - time: 12:30
+        - code: 010
+        - date: 2024-01-15
+        - flag: true
+          flag_index: 3
+          dose: 2.5
+        """))
+    self.assertEqual(parsed[0]["answer"], "no")
+    self.assertEqual(parsed[0]["answer_attributes"], {"seen": "2024-01-15"})
+    self.assertEqual(parsed[1]["time"], "12:30")
+    self.assertEqual(parsed[2]["code"], "010")
+    self.assertEqual(parsed[3]["date"], "2024-01-15")
+    self.assertIs(parsed[4]["flag"], True)
+    self.assertEqual(parsed[4]["flag_index"], 3)
+    self.assertEqual(parsed[4]["dose"], 2.5)
+
+  def test_unquoted_date_resolves_and_aligns(self):
+    res = resolver.Resolver(
+        format_handler=format_handler.FormatHandler(
+            format_type=data.FormatType.YAML,
+            use_wrapper=True,
+            wrapper_key="extractions",
+            use_fences=False,
+        )
+    )
+    extractions = res.resolve(textwrap.dedent("""\
+        extractions:
+        - visit_date: 2024-01-15
+        - time: 12:30
+        """))
+    aligned = list(res.align(extractions, "Seen 2024-01-15 at 12:30.", 0, 0))
+    self.assertEqual(
+        [e.extraction_text for e in aligned], ["2024-01-15", "12:30"]
+    )
+    self.assertEqual(
+        [e.alignment_status for e in aligned],
+        [data.AlignmentStatus.MATCH_EXACT, data.AlignmentStatus.MATCH_EXACT],
+    )
+
+
 if __name__ == "__main__":
   absltest.main()
