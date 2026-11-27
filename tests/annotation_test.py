@@ -1088,6 +1088,40 @@ class AnnotatorMultiPassTest(absltest.TestCase):
     self.assertLen(result.extractions, 1)
     self.assertEqual(result.extractions[0].extraction_class, "test")
 
+  def test_multipass_does_not_repeat_ungrounded_extractions(self):
+    """An ungrounded extraction found in every pass is returned once."""
+    text = "Patient has fever."
+    output = types.ScoredOutput(
+        score=1.0,
+        output=textwrap.dedent(f"""\
+          ```yaml
+          {data.EXTRACTIONS_KEY}:
+          - condition: "fever"
+            condition_index: 1
+          - summary: "acute febrile illness"
+            summary_index: 2
+          ```"""),
+    )
+    self.mock_language_model.infer.side_effect = [[[output]]] * 3
+
+    resolver = resolver_lib.Resolver(
+        format_type=data.FormatType.YAML,
+        extraction_index_suffix=resolver_lib.DEFAULT_INDEX_SUFFIX,
+    )
+
+    result = self.annotator.annotate_text(
+        text, resolver=resolver, extraction_passes=3, debug=False
+    )
+
+    self.assertEqual(
+        [
+            (e.extraction_class, e.char_interval is None)
+            for e in result.extractions
+        ],
+        [("condition", False), ("summary", True)],
+    )
+    self.assertEqual(self.mock_language_model.infer.call_count, 3)
+
 
 class MultiPassHelperFunctionsTest(parameterized.TestCase):
   """Tests for multi-pass helper functions."""
@@ -1151,6 +1185,32 @@ class MultiPassHelperFunctionsTest(parameterized.TestCase):
               "class1",
               "class3",
           ],  # class2 excluded due to overlap
+      ),
+      dict(
+          testcase_name="ungrounded_repeat_from_later_pass_dropped",
+          all_extractions=[
+              [
+                  data.Extraction("summary", "text1"),
+                  data.Extraction("summary", "text1"),
+              ],
+              [
+                  data.Extraction("summary", "text1"),  # Seen in pass 1
+                  data.Extraction("label", "text1"),  # Different class
+                  data.Extraction("summary", "text2"),  # New text
+                  data.Extraction("summary", "text2"),  # Same pass repeat
+              ],
+              [
+                  data.Extraction("summary", "text2"),  # Seen in pass 2
+              ],
+          ],
+          expected_count=5,
+          expected_classes=[
+              "summary",
+              "summary",
+              "label",
+              "summary",
+              "summary",
+          ],
       ),
   )
   def test_merge_non_overlapping_extractions(

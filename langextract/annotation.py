@@ -51,6 +51,8 @@ def _merge_non_overlapping_extractions(
   When extractions from different passes overlap in their character positions,
   the extraction from the earlier pass is kept (first-pass wins strategy).
   Only non-overlapping extractions from later passes are added to the result.
+  An extraction without a char_interval from a later pass is added only if no
+  earlier pass produced an ungrounded extraction with the same class and text.
 
   Args:
     all_extractions: List of extraction iterables from different sequential
@@ -69,9 +71,21 @@ def _merge_non_overlapping_extractions(
   merged_extractions = list(all_extractions[0])
 
   for pass_extractions in all_extractions[1:]:
+    # Ungrounded extractions have no position to compare, so match them by
+    # class and text against earlier passes only.
+    ungrounded_keys = {
+        (existing.extraction_class, existing.extraction_text)
+        for existing in merged_extractions
+        if existing.char_interval is None
+    }
     for extraction in pass_extractions:
       overlaps = False
-      if extraction.char_interval is not None:
+      if extraction.char_interval is None:
+        overlaps = (
+            extraction.extraction_class,
+            extraction.extraction_text,
+        ) in ungrounded_keys
+      else:
         for existing_extraction in merged_extractions:
           if existing_extraction.char_interval is not None:
             if _extractions_overlap(extraction, existing_extraction):
